@@ -383,6 +383,9 @@ class App:
         self.page, self.nav = (self.admin_home, "Overview") if self.admin else (self.dashboard, "Home")
         self.dashboard_month = datetime.now().month
         self.dashboard_year = datetime.now().year
+        self.menu = None
+        root.bind("<Button-1>", self.outside_click, add="+")
+        root.bind("<Escape>", lambda e: self.close_menu(), add="+")
         root.title(f"BudgetBuddy - {user['full_name']}")
         root.geometry("1350x950")
         root.minsize(1050, 680)
@@ -398,6 +401,7 @@ class App:
         return True
 
     def build(self):
+        self.menu = None
         for w in self.root.winfo_children():
             w.destroy()
         self.root.configure(fg_color=T["BG"])
@@ -436,7 +440,8 @@ class App:
         ctk.CTkLabel(bar, text="Administrator" if self.admin else "User", fg_color=T["MINT"],
                      text_color=T["TEXT"], corner_radius=14, font=font(10, True), width=76,
                      height=30).pack(side="right", padx=(4, 10))
-        button(bar, "⚙ Settings ▾", self.open_settings_menu, "peach", width=118, height=34).pack(side="right", padx=(4, 8))
+        self.gear = button(bar, "⚙ Settings ▾", self.open_settings_menu, "peach", width=118, height=34)
+        self.gear.pack(side="right", padx=(4, 8))
 
     def toggle(self):
         self.dark = not self.dark
@@ -739,20 +744,79 @@ class App:
             button(row, "Cancel", d.destroy, "mint", width=100).pack(side="left")
 
     # ---------------- Settings dropdown and account settings ----------------
+    def close_menu(self):
+        m = self.menu
+        self.menu = None
+        if m is not None and m.winfo_exists():
+            m.destroy()
+
+    def outside_click(self, e):
+        m = self.menu
+        if m is None or not m.winfo_exists():
+            self.menu = None
+            return
+        w = e.widget
+        while w is not None and not isinstance(w, str):
+            if w is m or w is getattr(self, "gear", None):
+                return  # click inside the dropdown (or on its button) is handled there
+            w = getattr(w, "master", None)
+        self.close_menu()
+
     def open_settings_menu(self):
-        menu = ctk.CTkToplevel(self.root)
-        menu.title("Settings")
-        menu.geometry("250x300")
-        menu.resizable(False, False)
-        menu.configure(fg_color=T["CARD"])
-        menu.transient(self.root)
-        menu.grab_set()
-        label(menu, "Account Settings", 17, True).pack(anchor="w", padx=18, pady=(18, 8))
-        button(menu, "Edit name / username", lambda: (menu.destroy(), self.edit_profile()), "mint").pack(fill="x", padx=16, pady=5)
-        button(menu, "Change password", lambda: (menu.destroy(), self.change_password_dialog()), "mint").pack(fill="x", padx=16, pady=5)
-        button(menu, "☀ Light mode" if self.dark else "☾ Dark mode", lambda: (menu.destroy(), self.toggle()), "primary").pack(fill="x", padx=16, pady=5)
-        button(menu, "Delete my account", lambda: (menu.destroy(), self.delete_account_dialog()), "danger").pack(fill="x", padx=16, pady=5)
-        button(menu, "Log out", lambda: (menu.destroy(), self.logout()), "peach").pack(fill="x", padx=16, pady=5)
+        """Dropdown panel that opens right under the Settings button, inside the main window."""
+        if self.menu is not None and self.menu.winfo_exists():
+            return self.close_menu()
+        panel = ctk.CTkFrame(self.root, fg_color=T["CARD"], corner_radius=16, border_width=1, border_color=T["BORDER"])
+        self.menu = panel
+        ctk.CTkFrame(panel, width=310, height=1, fg_color="transparent").pack()  # fixes the panel width
+
+        head = ctk.CTkFrame(panel, fg_color="transparent")
+        head.pack(fill="x", padx=14, pady=(14, 6))
+        initials = "".join(w[0] for w in self.user["full_name"].split()[:2]).upper() or "?"
+        ctk.CTkLabel(head, text=initials, width=44, height=44, corner_radius=22, fg_color=T["GREEN"],
+                     text_color=T["ON_GREEN"], font=font(14, True)).pack(side="left")
+        who = ctk.CTkFrame(head, fg_color="transparent")
+        who.pack(side="left", padx=10)
+        label(who, self.user["full_name"], 14, True).pack(anchor="w")
+        label(who, f"@{self.user.get('username', '')}  •  {'Administrator' if self.admin else 'User'}", 10, False, "MUTED").pack(anchor="w")
+        ctk.CTkFrame(panel, height=1, fg_color=T["BORDER"]).pack(fill="x", padx=14, pady=6)
+
+        def act(cmd):
+            self.close_menu()
+            self.root.after(20, cmd)
+
+        def row(icon, title, sub, cmd, danger=False):
+            r = ctk.CTkFrame(panel, fg_color="transparent", corner_radius=12)
+            r.pack(fill="x", padx=8, pady=1)
+            chip = ctk.CTkLabel(r, text=icon, width=38, height=38, corner_radius=19, fg_color=T["MINT"],
+                                text_color=T["WARN"] if danger else T["TEXT"], font=font(14, True))
+            chip.pack(side="left", padx=(8, 10), pady=6)
+            col = ctk.CTkFrame(r, fg_color="transparent")
+            col.pack(side="left", fill="x", expand=True)
+            t = label(col, title, 13, True, "WARN" if danger else "TEXT")
+            t.pack(anchor="w")
+            sub_l = label(col, sub, 10, False, "MUTED")
+            sub_l.pack(anchor="w")
+            parts = (r, chip, col, t, sub_l)
+            for w in parts:
+                w.bind("<Button-1>", lambda e, c=cmd: act(c))
+                w.bind("<Enter>", lambda e: r.configure(fg_color=T["MINT"]))
+                w.bind("<Leave>", lambda e: r.configure(fg_color="transparent"))
+
+        row("✎", "Edit name / username", "Update how you appear in BudgetBuddy", self.edit_profile)
+        row("✱", "Change password", "Keep your account secure", self.change_password_dialog)
+        row("☀" if self.dark else "☾", "Light mode" if self.dark else "Dark mode", "Switch the app appearance", self.toggle)
+        ctk.CTkFrame(panel, height=1, fg_color=T["BORDER"]).pack(fill="x", padx=14, pady=6)
+        row("✕", "Delete my account", "Permanently remove your data", self.delete_account_dialog, danger=True)
+        row("↩", "Log out", "Sign out of BudgetBuddy", self.logout)
+        ctk.CTkFrame(panel, height=8, fg_color="transparent").pack()
+
+        self.root.update_idletasks()
+        g = self.gear
+        x = g.winfo_rootx() - self.root.winfo_rootx() + g.winfo_width() - 312
+        y = g.winfo_rooty() - self.root.winfo_rooty() + g.winfo_height() + 6
+        panel.place(x=max(8, x), y=y)
+        panel.lift()
 
     def edit_profile(self):
         d = dialog(self.root, "Edit Profile", 440, 370)
